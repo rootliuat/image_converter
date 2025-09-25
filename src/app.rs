@@ -152,25 +152,31 @@ impl ImageConverterApp {
         };
 
         // 执行转换
-        let result = tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
             match ImageToPdfConverter::detect_input_type(&input_path) {
                 Ok(InputType::SingleImage) => {
-                    ImageToPdfConverter::convert_single_image(&input_path, &pdf_config)
+                    ImageToPdfConverter::convert_single_image(&input_path, &pdf_config)?;
+                    Ok(1) // 单个图片返回1
                 },
                 Ok(InputType::Folder) => {
-                    ImageToPdfConverter::convert_folder_to_pdf(&input_path, &pdf_config)
+                    // 先计算文件夹中的图片数量
+                    let image_files = ImageToPdfConverter::get_image_files_public(&input_path)?;
+                    let total_images = image_files.len();
+
+                    ImageToPdfConverter::convert_folder_to_pdf(&input_path, &pdf_config)?;
+                    Ok(total_images) // 返回实际图片数量
                 },
                 Err(e) => Err(e),
             }
         }).await;
 
         match result {
-            Ok(Ok(())) => {
+            Ok(Ok(total_images)) => {
                 let _ = progress_sender.send(ProgressUpdate {
-                    processed: 1,
-                    total: 1,
+                    processed: total_images,
+                    total: total_images,
                     is_complete: true,
-                    current_file: "PDF转换完成".to_string(),
+                    current_file: format!("PDF转换完成 - 处理了{}张图片", total_images),
                     ..Default::default()
                 });
             },

@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use ::image::{DynamicImage, ImageFormat};
-use printpdf::{PdfDocument, PdfDocumentReference, PdfLayerReference, Mm};
+use printpdf::{PdfDocument, PdfDocumentReference, PdfLayerReference, PdfPageIndex, PdfLayerIndex, Mm};
 use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::BufWriter;
@@ -156,8 +156,7 @@ impl ImageToPdfConverter {
             }
 
             // 添加图片到PDF
-            let layer_ref = doc.get_page(current_page).get_layer(current_layer);
-            Self::add_image_to_pdf(&doc, &layer_ref, image, config)
+            Self::add_image_to_pdf(&doc, current_layer, image, config, current_page)
                 .with_context(|| format!("添加图片到PDF失败: {}", name))?;
         }
 
@@ -187,28 +186,35 @@ impl ImageToPdfConverter {
         Ok(())
     }
 
-    /// 添加图片到PDF页面 - 完整实现，保持原始尺寸和画质
+    /// 添加图片到PDF页面 - 简化实现，先用文本标记确保PDF不为空白
     fn add_image_to_pdf(
-        _doc: &PdfDocumentReference,
-        _layer: &PdfLayerReference,
+        doc: &PdfDocumentReference,
+        layer: PdfLayerIndex,
         image: &DynamicImage,
         config: &PdfConfig,
+        page: PdfPageIndex,
     ) -> Result<()> {
+        use printpdf::{BuiltinFont, Mm};
+
         let width = image.width();
         let height = image.height();
 
         println!("  📸 添加图片 {}x{} 到PDF", width, height);
 
-        // 将图片转换为JPEG字节数据以便嵌入PDF
-        let _image_bytes = Self::image_to_bytes(image, config.image_quality)?;
+        // 🚨 临时解决方案：添加文本标记，确保PDF不为空白
+        // 这确保用户能看到处理结果，而不是空白页
+        // 直接使用传入的layer reference
 
-        // 使用printpdf的方式添加图片
+        // 添加字体
+        let font = doc.add_builtin_font(BuiltinFont::HelveticaBold)
+            .map_err(|e| anyhow::anyhow!("添加字体失败: {:?}", e))?;
+
         // 计算页面尺寸和图片位置
         let (img_x, img_y, img_width, img_height) = if config.preserve_original_size {
             // 保持原始像素尺寸，转换为毫米 (72 DPI)
             let width_mm = width as f32 * 25.4 / 72.0;
             let height_mm = height as f32 * 25.4 / 72.0;
-            (0.0, 0.0, width_mm, height_mm)
+            (10.0, 10.0, width_mm, height_mm)
         } else {
             // 适配A4纸张大小
             let a4_width_mm = 210.0;
@@ -226,13 +232,37 @@ impl ImageToPdfConverter {
             (x, y, final_width, final_height)
         };
 
-        // 创建图片对象并添加到PDF
-        // 注意：由于printpdf API的复杂性，这里使用基础方法
-        println!("    ✅ 保持原始尺寸: {:.1}x{:.1}mm (位置: {:.1},{:.1})",
-                img_width, img_height, img_x, img_y);
+        // 🚨 临时标记：在PDF中添加图片信息文本
+        // 直接使用传入的layer reference
+        let current_layer = doc.get_page(page).get_layer(layer);
 
-        // 实际的图片数据已准备好，printpdf会处理剩余的嵌入工作
-        // 这是一个功能性实现，确保图片信息被正确处理
+        current_layer.use_text(
+            format!("图片: {}x{} 像素", width, height),
+            12.0,
+            Mm(img_x),
+            Mm(img_y + img_height - 10.0), // 在图片预期位置上方
+            &font
+        );
+
+        current_layer.use_text(
+            format!("尺寸: {:.1}x{:.1}mm", img_width, img_height),
+            10.0,
+            Mm(img_x),
+            Mm(img_y + img_height - 20.0), // 第二行文本
+            &font
+        );
+
+        // TODO: 实际图片嵌入功能
+        current_layer.use_text(
+            "注意: 图片嵌入功能开发中，当前显示图片信息",
+            8.0,
+            Mm(img_x),
+            Mm(img_y + 10.0), // 在图片预期位置下方
+            &font
+        );
+
+        println!("    ✅ 成功添加图片信息标记: {:.1}x{:.1}mm (位置: {:.1},{:.1})",
+                img_width, img_height, img_x, img_y);
 
         Ok(())
     }
@@ -283,6 +313,11 @@ impl ImageToPdfConverter {
     }
 
     // 已移除 calculate_image_position_and_size 函数 - 未使用
+
+    /// 获取文件夹中的所有图片文件（公共接口）
+    pub fn get_image_files_public(folder_path: &Path) -> Result<Vec<PathBuf>> {
+        Self::get_image_files(folder_path)
+    }
 
     /// 获取文件夹中的所有图片文件
     fn get_image_files(folder_path: &Path) -> Result<Vec<PathBuf>> {
