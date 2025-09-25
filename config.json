@@ -1,0 +1,46 @@
+{
+  "default_input_path": "",
+  "default_output_path": "",
+  "default_target_size": 500,
+  "default_output_format": "PngCompressed",
+  "default_compression_mode": "SizeTarget",
+  "default_processing_mode": "SingleFile",
+  "default_app_mode": "ImageConverter",
+  "window_settings": {
+    "width": 800.0,
+    "height": 600.0,
+    "maximized": false,
+    "position": null
+  },
+  "advanced_settings": {
+    "jpeg_quality_range": [10, 95],
+    "png_compression_level": 6,
+    "pdf_render_dpi": 150.0,
+    "max_concurrent_jobs": 4,
+    "keep_original_files": true,
+    "show_detailed_progress": true,
+    "auto_open_output_folder": false
+  },
+  "watermark_settings": {
+    "enable_text_watermark": false,
+    "text_content": "Sample Watermark",
+    "text_size": 48,
+    "text_color": [255, 255, 255, 200],
+    "text_opacity": 0.8,
+    "text_position": "BottomRight",
+    "text_margin": 20,
+    "enable_image_watermark": false,
+    "image_watermark_path": "",
+    "image_scale": 0.2,
+    "image_opacity": 0.8,
+    "image_position": "BottomRight",
+    "image_margin": 20
+  },
+  "pdf_settings": {
+    "preserve_original_size": true,
+    "page_orientation": "Auto",
+    "image_quality": 90,
+    "one_image_per_page": true,
+    "default_output_name": "converted.pdf"
+  }
+}

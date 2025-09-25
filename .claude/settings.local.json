@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo:*)",
+      "Bash(rustc:*)",
+      "Bash(timeout:*)",
+      "WebSearch",
+      "Bash(del srcconverterwatermark_processor.rs)",
+      "Bash(./test_pdf_conversion.exe)",
+      "Bash(dir:*)",
+      "Bash(taskkill:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(./target/debug/image_converter.exe)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__deepwiki__deepwiki_fetch",
+      "Bash(git config:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
