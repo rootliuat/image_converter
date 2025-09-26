@@ -39,6 +39,19 @@ webp = "0.3"             # WebP现代图像格式支持
 imageproc = "0.25"       # 高级图像处理（文字渲染、几何变换）
 rusttype = "0.9"         # 字体渲染引擎
 printpdf = "0.7"         # PDF生成库
+base64 = "0.22"          # Base64编码/解码库
+
+[[bin]]
+name = "test_pdf_conversion"
+path = "test_pdf_conversion.rs"
+
+[[bin]]
+name = "test_printpdf_correct"
+path = "test_printpdf_correct.rs"
+
+[[bin]]
+name = "test_simple_pdf"
+path = "test_simple_pdf.rs"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

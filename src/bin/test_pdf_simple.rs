@@ -1,6 +1,6 @@
 // 简单的PDF转换测试
 
-use image_converter::converter::image_to_pdf::{ImageToPdfConverter, PdfConfig, PageOrientation};
+use image_converter::converter::image_to_pdf::{ImageToPdfConverter, PdfConfig, PageOrientation, PageMode};
 use std::path::PathBuf;
 
 fn main() {
@@ -22,6 +22,10 @@ fn main() {
         page_orientation: PageOrientation::Auto,
         image_quality: 90,
         one_image_per_page: true,
+        dpi: 300.0,
+        margin_mm: 0.0,
+        auto_rotate: true,
+        page_mode: PageMode::AdaptiveSize,
     };
 
     println!("📄 PDF配置:");

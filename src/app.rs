@@ -1,5 +1,5 @@
 use crate::converter::batch_processor::BatchProcessor;
-use crate::converter::image_to_pdf::{ImageToPdfConverter, PdfConfig, InputType, PageOrientation};
+use crate::converter::image_to_pdf::{ImageToPdfConverter, PdfConfig, InputType, PageOrientation, PageMode};
 use crate::converter::simple_watermark::WatermarkPosition;
 use crate::ui::{components, styles, menu_bar};
 use crate::utils::config::{AppConfig, OutputFormat, ProcessingMode, AppMode, PdfPageOrientation};
@@ -134,7 +134,7 @@ impl ImageConverterApp {
             ..Default::default()
         });
 
-        // 创建PDF配置
+        // 创建升级版PDF配置
         let pdf_config = PdfConfig {
             output_path: {
                 let mut path = output_path.clone();
@@ -149,22 +149,25 @@ impl ImageConverterApp {
             },
             image_quality: config.pdf_settings.image_quality,
             one_image_per_page: config.pdf_settings.one_image_per_page,
+            // 🚀 新增配置项
+            dpi: 300.0,                           // 高质量300 DPI
+            margin_mm: 0.0,                       // 0mm边距 - 消除白边
+            auto_rotate: true,                    // 启用自动旋转
+            page_mode: PageMode::AdaptiveSize,    // 自适应页面尺寸
         };
 
-        // 执行转换
+        // 使用修复后的PDF转换器
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
             match ImageToPdfConverter::detect_input_type(&input_path) {
                 Ok(InputType::SingleImage) => {
                     ImageToPdfConverter::convert_single_image(&input_path, &pdf_config)?;
-                    Ok(1) // 单个图片返回1
+                    Ok(1)
                 },
                 Ok(InputType::Folder) => {
-                    // 先计算文件夹中的图片数量
                     let image_files = ImageToPdfConverter::get_image_files_public(&input_path)?;
                     let total_images = image_files.len();
-
                     ImageToPdfConverter::convert_folder_to_pdf(&input_path, &pdf_config)?;
-                    Ok(total_images) // 返回实际图片数量
+                    Ok(total_images)
                 },
                 Err(e) => Err(e),
             }

@@ -1,0 +1,38 @@
+use eframe::egui;
+
+pub struct PdfConverterApp {
+    converter: ImageToPdfConverter,
+    selected_files: Vec<PathBuf>,
+    progress: f32,
+}
+
+impl eframe::App for PdfConverterApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // 设置区域
+            ui.heading("PDF转换设置");
+            
+            ui.horizontal(|ui| {
+                ui.label("DPI:");
+                ui.add(egui::Slider::new(&mut self.converter.dpi, 72.0..=600.0));
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("边距(mm):");
+                ui.add(egui::Slider::new(&mut self.converter.margin_mm, 0.0..=20.0));
+            });
+            
+            ui.checkbox(&mut self.converter.auto_rotate, "自动旋转适应");
+            
+            // 转换按钮
+            if ui.button("开始转换").clicked() {
+                self.start_conversion();
+            }
+            
+            // 进度条
+            if self.progress > 0.0 {
+                ui.add(egui::ProgressBar::new(self.progress));
+            }
+        });
+    }
+}

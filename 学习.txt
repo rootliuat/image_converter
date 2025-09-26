@@ -1,0 +1,359 @@
+use printpdf::*;
+use image::{DynamicImage, GenericImageView};
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::Path;
+
+/// 图片转PDF的核心结构体
+pub struct ImageToPdfConverter {
+    /// DPI设置，默认300
+    dpi: f64,
+    /// 是否自动旋转以适应页面
+    auto_rotate: bool,
+    /// 页面边距（毫米）
+    margin_mm: f64,
+}
+
+impl Default for ImageToPdfConverter {
+    fn default() -> Self {
+        Self {
+            dpi: 300.0,
+            auto_rotate: true,
+            margin_mm: 5.0, // 5mm边距
+        }
+    }
+}
+
+impl ImageToPdfConverter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
+    /// 设置DPI
+    pub fn with_dpi(mut self, dpi: f64) -> Self {
+        self.dpi = dpi;
+        self
+    }
+    
+    /// 设置边距
+    pub fn with_margin(mut self, margin_mm: f64) -> Self {
+        self.margin_mm = margin_mm;
+        self
+    }
+    
+    /// 将多张图片转换为PDF
+    pub fn convert_images_to_pdf(
+        &self,
+        image_paths: Vec<&Path>,
+        output_path: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 创建PDF文档
+        let mut doc = PdfDocument::empty("Image to PDF");
+        
+        for (index, image_path) in image_paths.iter().enumerate() {
+            // 加载图片
+            let img = image::open(image_path)?;
+            
+            // 添加页面（自适应大小）
+            self.add_image_page(&mut doc, &img, index)?;
+        }
+        
+        // 保存PDF
+        doc.save(&mut BufWriter::new(File::create(output_path)?))?;
+        
+        Ok(())
+    }
+    
+    /// 添加单个图片页面（核心方法）
+    fn add_image_page(
+        &self,
+        doc: &mut PdfDocument,
+        img: &DynamicImage,
+        page_index: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (img_width, img_height) = img.dimensions();
+        
+        // 计算图片实际尺寸（毫米）
+        // 假设图片DPI为self.dpi
+        let img_width_mm = (img_width as f64 / self.dpi) * 25.4;
+        let img_height_mm = (img_height as f64 / self.dpi) * 25.4;
+        
+        // 方案1：根据图片尺寸创建PDF页面（推荐）
+        let (page_width_mm, page_height_mm) = self.calculate_optimal_page_size(
+            img_width_mm,
+            img_height_mm,
+        );
+        
+        // 创建自定义尺寸的页面
+        let (page, layer_index) = doc.add_page(
+            Mm(page_width_mm),
+            Mm(page_height_mm),
+            format!("Page {}", page_index + 1),
+        );
+        
+        let layer = doc.get_page(page).get_layer(layer_index);
+        
+        // 计算图片在页面上的位置和大小
+        let (x, y, width, height) = self.calculate_image_position(
+            img_width_mm,
+            img_height_mm,
+            page_width_mm,
+            page_height_mm,
+        );
+        
+        // 将图片转换为PDF图像
+        let pdf_image = self.create_pdf_image(img)?;
+        
+        // 添加图片到页面
+        pdf_image.add_to_layer(
+            layer.clone(),
+            ImageTransform {
+                translate_x: Some(Mm(x)),
+                translate_y: Some(Mm(y)),
+                scale_x: Some(width / img_width_mm),
+                scale_y: Some(height / img_height_mm),
+                ..Default::default()
+            },
+        );
+        
+        Ok(())
+    }
+    
+    /// 计算最优页面尺寸
+    fn calculate_optimal_page_size(&self, img_width_mm: f64, img_height_mm: f64) -> (f64, f64) {
+        // 方案1：页面尺寸 = 图片尺寸 + 边距
+        let page_width = img_width_mm + 2.0 * self.margin_mm;
+        let page_height = img_height_mm + 2.0 * self.margin_mm;
+        
+        (page_width, page_height)
+    }
+    
+    /// 方案2：适应标准页面尺寸（A4、Letter等）
+    pub fn convert_to_standard_page(
+        &self,
+        image_paths: Vec<&Path>,
+        output_path: &Path,
+        page_format: PageFormat,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut doc = PdfDocument::empty("Image to PDF");
+        
+        for (index, image_path) in image_paths.iter().enumerate() {
+            let img = image::open(image_path)?;
+            self.add_image_to_standard_page(&mut doc, &img, page_format, index)?;
+        }
+        
+        doc.save(&mut BufWriter::new(File::create(output_path)?))?;
+        Ok(())
+    }
+    
+    /// 添加图片到标准页面
+    fn add_image_to_standard_page(
+        &self,
+        doc: &mut PdfDocument,
+        img: &DynamicImage,
+        page_format: PageFormat,
+        page_index: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (img_width, img_height) = img.dimensions();
+        
+        // 获取页面尺寸（毫米）
+        let (page_width_mm, page_height_mm) = match page_format {
+            PageFormat::A4 => (210.0, 297.0),
+            PageFormat::Letter => (215.9, 279.4),
+            PageFormat::A3 => (297.0, 420.0),
+            _ => (210.0, 297.0), // 默认A4
+        };
+        
+        // 检查是否需要旋转页面以更好地适应图片
+        let (final_width, final_height, should_rotate) = if self.auto_rotate {
+            self.check_rotation_needed(
+                img_width as f64,
+                img_height as f64,
+                page_width_mm,
+                page_height_mm,
+            )
+        } else {
+            (page_width_mm, page_height_mm, false)
+        };
+        
+        // 创建页面
+        let (page, layer_index) = doc.add_page(
+            Mm(final_width),
+            Mm(final_height),
+            format!("Page {}", page_index + 1),
+        );
+        
+        let layer = doc.get_page(page).get_layer(layer_index);
+        
+        // 计算可用区域（减去边距）
+        let available_width = final_width - 2.0 * self.margin_mm;
+        let available_height = final_height - 2.0 * self.margin_mm;
+        
+        // 计算缩放比例（保持纵横比）
+        let img_aspect_ratio = img_width as f64 / img_height as f64;
+        let page_aspect_ratio = available_width / available_height;
+        
+        let (scaled_width, scaled_height) = if img_aspect_ratio > page_aspect_ratio {
+            // 图片较宽，以宽度为基准
+            let w = available_width;
+            let h = w / img_aspect_ratio;
+            (w, h)
+        } else {
+            // 图片较高，以高度为基准
+            let h = available_height;
+            let w = h * img_aspect_ratio;
+            (w, h)
+        };
+        
+        // 居中定位
+        let x = self.margin_mm + (available_width - scaled_width) / 2.0;
+        let y = self.margin_mm + (available_height - scaled_height) / 2.0;
+        
+        // 创建PDF图像
+        let pdf_image = self.create_pdf_image(img)?;
+        
+        // 添加图片
+        pdf_image.add_to_layer(
+            layer.clone(),
+            ImageTransform {
+                translate_x: Some(Mm(x)),
+                translate_y: Some(Mm(y)),
+                scale_x: Some(scaled_width / (img_width as f64)),
+                scale_y: Some(scaled_height / (img_height as f64)),
+                ..Default::default()
+            },
+        );
+        
+        Ok(())
+    }
+    
+    /// 检查是否需要旋转页面
+    fn check_rotation_needed(
+        &self,
+        img_width: f64,
+        img_height: f64,
+        page_width: f64,
+        page_height: f64,
+    ) -> (f64, f64, bool) {
+        let img_is_landscape = img_width > img_height;
+        let page_is_landscape = page_width > page_height;
+        
+        if img_is_landscape != page_is_landscape {
+            // 图片和页面方向不一致，旋转页面
+            (page_height, page_width, true)
+        } else {
+            (page_width, page_height, false)
+        }
+    }
+    
+    /// 计算图片在页面上的位置
+    fn calculate_image_position(
+        &self,
+        img_width_mm: f64,
+        img_height_mm: f64,
+        page_width_mm: f64,
+        page_height_mm: f64,
+    ) -> (f64, f64, f64, f64) {
+        // 居中放置
+        let x = self.margin_mm;
+        let y = self.margin_mm;
+        let width = page_width_mm - 2.0 * self.margin_mm;
+        let height = page_height_mm - 2.0 * self.margin_mm;
+        
+        (x, y, width, height)
+    }
+    
+    /// 创建PDF图像对象
+    fn create_pdf_image(&self, img: &DynamicImage) -> Result<Image, Box<dyn std::error::Error>> {
+        // 转换为RGB8格式
+        let rgb_img = img.to_rgb8();
+        let (width, height) = rgb_img.dimensions();
+        
+        // 创建PDF图像
+        let pdf_image = Image::from_dynamic_image(&img);
+        
+        Ok(pdf_image)
+    }
+}
+
+/// 页面格式枚举
+#[derive(Debug, Clone, Copy)]
+pub enum PageFormat {
+    A3,
+    A4,
+    A5,
+    Letter,
+    Legal,
+}
+
+/// 使用示例
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_convert_images() {
+        let converter = ImageToPdfConverter::new()
+            .with_dpi(300.0)
+            .with_margin(5.0);
+        
+        // 方案1：自适应页面大小（推荐，无留白）
+        let image_paths = vec![
+            Path::new("image1.jpg"),
+            Path::new("image2.png"),
+        ];
+        
+        converter.convert_images_to_pdf(
+            image_paths,
+            Path::new("output_adaptive.pdf"),
+        ).unwrap();
+        
+        // 方案2：固定页面大小
+        converter.convert_to_standard_page(
+            vec![Path::new("image1.jpg")],
+            Path::new("output_a4.pdf"),
+            PageFormat::A4,
+        ).unwrap();
+    }
+}
+
+/// 批量处理工具函数
+pub fn batch_convert_with_progress<F>(
+    input_dir: &Path,
+    output_file: &Path,
+    progress_callback: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Fn(usize, usize),
+{
+    let converter = ImageToPdfConverter::new();
+    
+    // 获取所有图片文件
+    let mut image_files = Vec::new();
+    for entry in std::fs::read_dir(input_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if let Some(ext) = path.extension() {
+            let ext_lower = ext.to_string_lossy().to_lowercase();
+            if ["jpg", "jpeg", "png", "bmp", "gif"].contains(&ext_lower.as_str()) {
+                image_files.push(path);
+            }
+        }
+    }
+    
+    // 排序
+    image_files.sort();
+    
+    // 转换
+    let total = image_files.len();
+    let paths: Vec<&Path> = image_files.iter().map(|p| p.as_path()).collect();
+    
+    for (i, _) in paths.iter().enumerate() {
+        progress_callback(i + 1, total);
+    }
+    
+    converter.convert_images_to_pdf(paths, output_file)?;
+    
+    Ok(())
+}

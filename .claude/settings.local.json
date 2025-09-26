@@ -21,7 +21,17 @@
       "Bash(git commit:*)",
       "Bash(git remote add:*)",
       "Bash(git branch:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(./target/debug/test_pdf_conversion.exe)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:www.ajimenez.es)",
+      "Bash(where magick)",
+      "Bash(/bashes)",
+      "Bash(where:*)",
+      "Bash(cmd /c:*)",
+      "Bash(del test_page001_pdf.rs)"
     ],
     "deny": [],
     "ask": []

@@ -1,14 +1,14 @@
 // 图片转PDF功能模块 - 保持原始尺寸和像素质量
 
 use anyhow::{Context, Result};
-use ::image::{DynamicImage, ImageFormat};
-use printpdf::{PdfDocument, PdfDocumentReference, PdfLayerReference, PdfPageIndex, PdfLayerIndex, Mm};
+use ::image::{DynamicImage, GenericImageView};
+use printpdf::{PdfDocument, PdfDocumentReference, PdfPageIndex, PdfLayerIndex, Mm, Px, ImageXObject, Image, ImageTransform, ColorSpace, ColorBits};
 use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::BufWriter;
 use walkdir::WalkDir;
 
-/// PDF转换配置
+/// PDF转换配置 - 升级版
 #[derive(Debug, Clone)]
 pub struct PdfConfig {
     /// 输出PDF路径
@@ -21,6 +21,35 @@ pub struct PdfConfig {
     pub image_quality: u8,
     /// 是否为每张图片创建单独的页面
     pub one_image_per_page: bool,
+    /// DPI设置 (72-600)
+    pub dpi: f32,
+    /// 页面边距（毫米）
+    pub margin_mm: f32,
+    /// 是否自动旋转页面以适应图片
+    pub auto_rotate: bool,
+    /// 页面尺寸模式
+    pub page_mode: PageMode,
+}
+
+/// 页面尺寸模式
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageMode {
+    /// 固定A4尺寸
+    FixedA4,
+    /// 根据图片自适应页面尺寸
+    AdaptiveSize,
+    /// 其他标准尺寸
+    Standard(StandardPageSize),
+}
+
+/// 标准页面尺寸
+#[derive(Debug, Clone, PartialEq)]
+pub enum StandardPageSize {
+    A3,
+    A4,
+    A5,
+    Letter,
+    Legal,
 }
 
 /// 页面方向选项
@@ -34,9 +63,7 @@ pub enum PageOrientation {
     Portrait,
 }
 
-/// 图片转PDF处理器
-pub struct ImageToPdfConverter;
-
+/// 为PdfConfig实现默认值
 impl Default for PdfConfig {
     fn default() -> Self {
         Self {
@@ -45,9 +72,43 @@ impl Default for PdfConfig {
             page_orientation: PageOrientation::Auto,
             image_quality: 90,
             one_image_per_page: true,
+            dpi: 300.0,           // 高质量300 DPI
+            margin_mm: 0.0,       // 0mm边距 - 消除白边
+            auto_rotate: true,    // 自动旋转
+            page_mode: PageMode::AdaptiveSize, // 自适应页面尺寸
         }
     }
 }
+
+/// 为PdfConfig添加构建方法
+impl PdfConfig {
+    pub fn new(output_path: PathBuf) -> Self {
+        Self {
+            output_path,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_dpi(mut self, dpi: f32) -> Self {
+        self.dpi = dpi;
+        self
+    }
+
+    pub fn with_margin(mut self, margin_mm: f32) -> Self {
+        self.margin_mm = margin_mm;
+        self
+    }
+
+    pub fn with_page_mode(mut self, page_mode: PageMode) -> Self {
+        self.page_mode = page_mode;
+        self
+    }
+}
+
+/// 图片转PDF处理器
+pub struct ImageToPdfConverter;
+
+// 删除重复的Default实现，使用上面的新版本
 
 impl ImageToPdfConverter {
     /// 将单个图片转换为PDF
@@ -130,11 +191,13 @@ impl ImageToPdfConverter {
         let start_time = std::time::Instant::now();
         println!("📄 开始创建PDF: {}", config.output_path.display());
 
-        // 创建PDF文档
+        // 根据第一张图片创建合适尺寸的PDF文档
+        let first_image = &images[0];
+        let (page_width, page_height) = Self::calculate_page_size(first_image, config)?;
         let (doc, page1, layer1) = PdfDocument::new(
             "图片转换PDF",
-            Mm(210.0), // A4宽度
-            Mm(297.0), // A4高度
+            Mm(page_width), // 根据第一张图片调整宽度
+            Mm(page_height), // 根据第一张图片调整高度
             "主页"
         );
 
@@ -148,8 +211,8 @@ impl ImageToPdfConverter {
 
             // 如果不是第一张图片且需要每张图片一页，创建新页面
             if i > 0 && config.one_image_per_page {
-                let page_size = Self::calculate_page_size(image, config);
-                let (new_page, new_layer) = doc.add_page(page_size.0, page_size.1, &format!("页面{}", i + 1));
+                let (page_w, page_h) = Self::calculate_page_size(image, config)?;
+                let (new_page, new_layer) = doc.add_page(Mm(page_w), Mm(page_h), &format!("页面{}", i + 1));
                 current_page = new_page;
                 current_layer = new_layer;
                 page_count += 1;
@@ -186,7 +249,7 @@ impl ImageToPdfConverter {
         Ok(())
     }
 
-    /// 添加图片到PDF页面 - 简化实现，先用文本标记确保PDF不为空白
+    /// 添加图片到PDF页面 - 真实的图片嵌入实现
     fn add_image_to_pdf(
         doc: &PdfDocumentReference,
         layer: PdfLayerIndex,
@@ -194,106 +257,173 @@ impl ImageToPdfConverter {
         config: &PdfConfig,
         page: PdfPageIndex,
     ) -> Result<()> {
-        use printpdf::{BuiltinFont, Mm};
 
         let width = image.width();
         let height = image.height();
 
-        println!("  📸 添加图片 {}x{} 到PDF", width, height);
+        println!("  📸 真实嵌入图片 {}x{} 到PDF", width, height);
 
-        // 🚨 临时解决方案：添加文本标记，确保PDF不为空白
-        // 这确保用户能看到处理结果，而不是空白页
-        // 直接使用传入的layer reference
+        // 🚀 真正的图片嵌入实现
+        // 步骤1: 转换图片为RGB8格式
+        let rgb_image = image.to_rgb8();
+        let image_data = rgb_image.as_raw().clone();
 
-        // 添加字体
-        let font = doc.add_builtin_font(BuiltinFont::HelveticaBold)
-            .map_err(|e| anyhow::anyhow!("添加字体失败: {:?}", e))?;
-
-        // 计算页面尺寸和图片位置
-        let (img_x, img_y, img_width, img_height) = if config.preserve_original_size {
-            // 保持原始像素尺寸，转换为毫米 (72 DPI)
-            let width_mm = width as f32 * 25.4 / 72.0;
-            let height_mm = height as f32 * 25.4 / 72.0;
-            (10.0, 10.0, width_mm, height_mm)
-        } else {
-            // 适配A4纸张大小
-            let a4_width_mm = 210.0;
-            let a4_height_mm = 297.0;
-
-            let scale_x = a4_width_mm / width as f32;
-            let scale_y = a4_height_mm / height as f32;
-            let scale = scale_x.min(scale_y);
-
-            let final_width = width as f32 * scale;
-            let final_height = height as f32 * scale;
-            let x = (a4_width_mm - final_width) / 2.0;
-            let y = (a4_height_mm - final_height) / 2.0;
-
-            (x, y, final_width, final_height)
+        // 步骤2: 创建ImageXObject (printpdf的图片对象)
+        let image_xobject = ImageXObject {
+            width: Px(width as usize),
+            height: Px(height as usize),
+            color_space: ColorSpace::Rgb,
+            bits_per_component: ColorBits::Bit8,
+            interpolate: true,
+            image_data,
+            image_filter: None, // 不压缩以保持质量
+            clipping_bbox: None,
+            smask: None, // 没有透明蒙版
         };
 
-        // 🚨 临时标记：在PDF中添加图片信息文本
-        // 直接使用传入的layer reference
+        // 步骤3: 创建PDF Image对象
+        let pdf_image = Image::from(image_xobject);
+
+        // 步骤4: 让图片完全填满页面 - 正确的缩放计算
+        // printpdf使用的是毫米单位，需要正确的单位转换
+
+        // 🎯 智能页面尺寸计算 - 基于配置模式
+        let (page_width_mm, page_height_mm) = Self::calculate_page_size(image, config)?;
+
+        // 🚀 升级版缩放计算：使用配置的DPI
+        let pixel_to_mm = 25.4 / config.dpi; // 使用配置的DPI
+        let image_width_mm = width as f32 * pixel_to_mm;
+        let image_height_mm = height as f32 * pixel_to_mm;
+
+        // 使用配置的边距值
+        let usable_width = page_width_mm - 2.0 * config.margin_mm;
+        let usable_height = page_height_mm - 2.0 * config.margin_mm;
+        let margin_x = config.margin_mm;
+        let margin_y = config.margin_mm;
+
+        let scale_x = usable_width / image_width_mm;
+        let scale_y = usable_height / image_height_mm;
+
+        // 选择缩放策略
+        let (img_x, img_y, final_scale_x, final_scale_y) = if config.preserve_original_size {
+            // 保持宽高比，图片完整显示（可能有留白）
+            let uniform_scale = scale_x.min(scale_y);
+            let scaled_width = image_width_mm * uniform_scale;
+            let scaled_height = image_height_mm * uniform_scale;
+            let center_x = margin_x + (usable_width - scaled_width) / 2.0;
+            let center_y = margin_y + (usable_height - scaled_height) / 2.0;
+
+            (center_x, center_y, uniform_scale, uniform_scale)
+        } else {
+            // 拉伸填满整个页面（可能变形但无留白）
+            (margin_x, margin_y, scale_x, scale_y)
+        };
+
+        // 步骤5: 获取PDF层并添加图片
         let current_layer = doc.get_page(page).get_layer(layer);
 
-        current_layer.use_text(
-            format!("图片: {}x{} 像素", width, height),
-            12.0,
-            Mm(img_x),
-            Mm(img_y + img_height - 10.0), // 在图片预期位置上方
-            &font
+        pdf_image.add_to_layer(
+            current_layer,
+            ImageTransform {
+                translate_x: Some(Mm(img_x)),
+                translate_y: Some(Mm(img_y)),
+                scale_x: Some(final_scale_x),
+                scale_y: Some(final_scale_y),
+                ..Default::default()
+            },
         );
 
-        current_layer.use_text(
-            format!("尺寸: {:.1}x{:.1}mm", img_width, img_height),
-            10.0,
-            Mm(img_x),
-            Mm(img_y + img_height - 20.0), // 第二行文本
-            &font
-        );
-
-        // TODO: 实际图片嵌入功能
-        current_layer.use_text(
-            "注意: 图片嵌入功能开发中，当前显示图片信息",
-            8.0,
-            Mm(img_x),
-            Mm(img_y + 10.0), // 在图片预期位置下方
-            &font
-        );
-
-        println!("    ✅ 成功添加图片信息标记: {:.1}x{:.1}mm (位置: {:.1},{:.1})",
-                img_width, img_height, img_x, img_y);
+        let strategy = if config.preserve_original_size { "保持宽高比" } else { "拉伸填满" };
+        println!("    ✅ 成功嵌入图片: {}x{} -> 页面{}x{}mm | 策略:{} | 位置:({:.1},{:.1})mm | 缩放:({:.3},{:.3})",
+                width, height, page_width_mm, page_height_mm, strategy, img_x, img_y, final_scale_x, final_scale_y);
 
         Ok(())
     }
 
-    /// 将图片转换为字节数据
-    fn image_to_bytes(image: &DynamicImage, _quality: u8) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        let mut cursor = std::io::Cursor::new(&mut bytes);
 
-        // JPEG不支持透明通道，需要转换为RGB格式
-        let rgb_image = image.to_rgb8();
-        let rgb_dynamic = DynamicImage::ImageRgb8(rgb_image);
+    /// 智能计算页面尺寸 - 升级版
+    fn calculate_page_size(image: &DynamicImage, config: &PdfConfig) -> Result<(f32, f32)> {
+        let (width, height) = image.dimensions();
 
-        // 使用JPEG格式以获得更好的压缩比
-        rgb_dynamic.write_to(&mut cursor, ImageFormat::Jpeg)
-            .with_context(|| "图片编码失败")?;
+        match &config.page_mode {
+            PageMode::AdaptiveSize => {
+                // 自适应页面尺寸：根据图片尺寸和DPI计算最佳页面
+                let pixel_to_mm = 25.4 / config.dpi;
+                let img_width_mm = width as f32 * pixel_to_mm + 2.0 * config.margin_mm;
+                let img_height_mm = height as f32 * pixel_to_mm + 2.0 * config.margin_mm;
 
-        Ok(bytes)
+                // 检查是否需要自动旋转
+                if config.auto_rotate {
+                    let img_is_landscape = width > height;
+                    match config.page_orientation {
+                        PageOrientation::Auto => {
+                            if img_is_landscape {
+                                Ok((img_width_mm, img_height_mm))
+                            } else {
+                                Ok((img_width_mm, img_height_mm))
+                            }
+                        },
+                        PageOrientation::Landscape => Ok((img_width_mm.max(img_height_mm), img_width_mm.min(img_height_mm))),
+                        PageOrientation::Portrait => Ok((img_width_mm.min(img_height_mm), img_width_mm.max(img_height_mm))),
+                    }
+                } else {
+                    Ok((img_width_mm, img_height_mm))
+                }
+            },
+            PageMode::FixedA4 => {
+                // 固定A4尺寸
+                if config.auto_rotate && config.page_orientation == PageOrientation::Auto {
+                    let img_is_landscape = width > height;
+                    if img_is_landscape {
+                        Ok((297.0, 210.0)) // A4横向
+                    } else {
+                        Ok((210.0, 297.0)) // A4纵向
+                    }
+                } else {
+                    match config.page_orientation {
+                        PageOrientation::Landscape => Ok((297.0, 210.0)),
+                        _ => Ok((210.0, 297.0)),
+                    }
+                }
+            },
+            PageMode::Standard(size) => {
+                // 标准页面尺寸
+                let (w, h): (f32, f32) = match size {
+                    StandardPageSize::A3 => (297.0, 420.0),
+                    StandardPageSize::A4 => (210.0, 297.0),
+                    StandardPageSize::A5 => (148.0, 210.0),
+                    StandardPageSize::Letter => (215.9, 279.4),
+                    StandardPageSize::Legal => (215.9, 355.6),
+                };
+
+                if config.auto_rotate && config.page_orientation == PageOrientation::Auto {
+                    let img_is_landscape = width > height;
+                    if img_is_landscape {
+                        Ok((w.max(h), w.min(h)))
+                    } else {
+                        Ok((w.min(h), w.max(h)))
+                    }
+                } else {
+                    match config.page_orientation {
+                        PageOrientation::Landscape => Ok((w.max(h), w.min(h))),
+                        _ => Ok((w.min(h), w.max(h))),
+                    }
+                }
+            }
+        }
     }
 
-    /// 计算页面尺寸
-    fn calculate_page_size(image: &DynamicImage, config: &PdfConfig) -> (Mm, Mm) {
+    /// 旧版本计算页面尺寸（保留兼容性）
+    fn calculate_page_size_legacy(image: &DynamicImage, config: &PdfConfig) -> (Mm, Mm) {
         if !config.preserve_original_size {
             // 使用A4纸尺寸
             return (Mm(210.0), Mm(297.0));
         }
 
         // 保持原始尺寸，将像素转换为毫米
-        // 假设72 DPI (1英寸 = 25.4毫米, 72像素 = 1英寸)
-        let width_mm = (image.width() as f32 * 25.4) / 72.0;
-        let height_mm = (image.height() as f32 * 25.4) / 72.0;
+        // 使用150 DPI，适合打印质量 (1英寸 = 25.4毫米, 150像素 = 1英寸)
+        let width_mm = (image.width() as f32 * 25.4) / 150.0;
+        let height_mm = (image.height() as f32 * 25.4) / 150.0;
 
         let (width, height) = match config.page_orientation {
             PageOrientation::Auto => {
