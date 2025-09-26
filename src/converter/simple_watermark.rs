@@ -62,6 +62,7 @@ pub struct SimpleTextWatermark {
     pub opacity: f32,
     pub margin: u32,
     pub background: Option<Rgba<u8>>, // 可选背景色
+    pub letter_spacing: f32, // 字符间距（像素）
 }
 
 /// 图片水印配置
@@ -93,6 +94,7 @@ impl Default for SimpleTextWatermark {
             opacity: 0.8,
             margin: 20,
             background: Some(Rgba([0, 0, 0, 100])), // 半透明黑色背景
+            letter_spacing: 2.0, // 默认字符间距2像素
         }
     }
 }
@@ -125,9 +127,13 @@ impl SimpleWatermarkProcessor {
 
         let mut rgba_image = image.to_rgba8();
 
-        // 计算文字区域尺寸（基于字符数和字体大小）
+        // 计算文字区域尺寸（基于字符数、字体大小和字符间距）
         let char_width = config.font_size * 6 / 10; // 近似字符宽度
-        let text_width = config.text.len() as u32 * char_width;
+        let text_width = if config.text.len() > 0 {
+            (config.text.len() as f32 * char_width as f32 + (config.text.len() as f32 - 1.0) * config.letter_spacing) as u32
+        } else {
+            0
+        };
         let text_height = config.font_size;
 
         // 计算位置
@@ -146,9 +152,9 @@ impl SimpleWatermarkProcessor {
             self.draw_text_background(&mut rgba_image, x, y, text_width, text_height, bg_color);
         }
 
-        // 绘制简化文字（使用像素点阵）
+        // 绘制简化文字（使用像素点阵和字符间距）
         let text_color = self.apply_opacity(config.color, config.opacity);
-        self.draw_pixel_text(&mut rgba_image, &config.text, x + 5, y + 3, config.font_size, text_color)?;
+        self.draw_pixel_text(&mut rgba_image, &config.text, x + 5, y + 3, config.font_size, text_color, config.letter_spacing)?;
 
         log::debug!("简化文字水印处理耗时: {:?}", start.elapsed());
 
@@ -292,7 +298,7 @@ impl SimpleWatermarkProcessor {
         }
     }
 
-    /// 绘制简化像素文字
+    /// 绘制简化像素文字（支持字符间距）
     fn draw_pixel_text(
         &self,
         image: &mut RgbaImage,
@@ -301,12 +307,13 @@ impl SimpleWatermarkProcessor {
         start_y: u32,
         font_size: u32,
         color: Rgba<u8>,
+        letter_spacing: f32,
     ) -> Result<()> {
         let char_width = font_size * 6 / 10;
         let _char_height = font_size;
 
         for (char_idx, ch) in text.chars().enumerate() {
-            let char_x = start_x + (char_idx as u32 * char_width);
+            let char_x = start_x + (char_idx as f32 * (char_width as f32 + letter_spacing)) as u32;
 
             // 简化字符绘制（基于ASCII）
             self.draw_simple_char(image, ch, char_x, start_y, font_size, color)?;
@@ -451,6 +458,7 @@ impl SimpleWatermarkProcessor {
             opacity: 0.8,
             margin: 15,
             background: Some(Rgba([0, 0, 0, 80])),
+            letter_spacing: 1.0, // 版权水印使用较小间距
         }
     }
 
@@ -465,6 +473,7 @@ impl SimpleWatermarkProcessor {
             opacity: 0.6,
             margin: 30,
             background: None,
+            letter_spacing: 3.0, // 品牌水印使用较大间距，更显眼
         }
     }
 }

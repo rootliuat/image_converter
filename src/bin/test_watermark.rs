@@ -23,6 +23,7 @@ fn main() {
         opacity: 0.8,
         margin: 20,
         background: None,
+        letter_spacing: 3.0, // 测试字符间距
     };
 
     // 添加文字水印

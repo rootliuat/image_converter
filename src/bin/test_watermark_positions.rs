@@ -34,6 +34,7 @@ fn main() {
             opacity: 0.9,
             margin: 15,
             background: Some(Rgba([0, 0, 0, 100])), // 半透明黑色背景
+            letter_spacing: 1.0, // 紧凑的字符间距
         };
 
         // 添加文字水印
@@ -63,6 +64,7 @@ fn main() {
         opacity: 0.8,
         margin: 0, // 自定义位置时margin无效
         background: Some(Rgba([255, 0, 0, 80])), // 半透明红色背景
+        letter_spacing: 4.0, // 更宽的字符间距用于强调
     };
 
     match processor.add_text_watermark(test_image, &custom_watermark) {

@@ -123,6 +123,8 @@ pub struct WatermarkSettings {
     pub text_position: WatermarkPosition,
     /// 文字边距
     pub text_margin: u32,
+    /// 文字字符间距（像素）
+    pub text_letter_spacing: f32,
     /// 是否启用图片水印
     pub enable_image_watermark: bool,
     /// 图片水印路径
@@ -237,6 +239,7 @@ impl Default for WatermarkSettings {
             text_opacity: 0.8,
             text_position: WatermarkPosition::BottomRight,
             text_margin: 20,
+            text_letter_spacing: 2.0, // 默认字符间距2像素
             enable_image_watermark: false,
             image_watermark_path: String::new(),
             image_scale: 0.2,
@@ -338,6 +341,7 @@ impl WatermarkSettings {
             opacity: self.text_opacity,
             margin: self.text_margin,
             background: None,
+            letter_spacing: self.text_letter_spacing, // 使用配置的字符间距
         }
     }
 

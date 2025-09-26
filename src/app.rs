@@ -5,6 +5,7 @@ use crate::ui::{components, styles, menu_bar};
 use crate::utils::config::{AppConfig, OutputFormat, ProcessingMode, AppMode, PdfPageOrientation};
 use crate::utils::file_utils;
 use eframe::egui;
+use image::DynamicImage;
 use rfd::FileDialog;
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -411,7 +412,9 @@ impl ImageConverterApp {
             ..Default::default()
         });
 
+        let progress_sender_clone = progress_sender.clone();
         let result = tokio::task::spawn_blocking(move || {
+            let progress_sender = progress_sender_clone;
             // 检查是否启用了水印
             if !config.watermark_settings.enable_text_watermark && !config.watermark_settings.enable_image_watermark {
                 return Err(anyhow::anyhow!("请至少启用一种水印类型"));
@@ -466,6 +469,15 @@ impl ImageConverterApp {
 
             println!("💧 开始纯水印处理，找到 {} 个图片文件", image_files.len());
 
+            // 发送总文件数进度更新
+            let total_files = image_files.len();
+            let _ = progress_sender.send(ProgressUpdate {
+                processed: 0,
+                total: total_files,
+                current_file: format!("准备处理 {} 个文件...", total_files),
+                ..Default::default()
+            });
+
             // 确保输出目录存在
             std::fs::create_dir_all(&output_path)?;
 
@@ -474,6 +486,15 @@ impl ImageConverterApp {
 
             for (file_index, image_file) in image_files.iter().enumerate() {
                 println!("🖼️ 处理第 {} 个图片: {}", file_index + 1, image_file.display());
+
+                // 发送当前处理文件的进度更新
+                let file_name = image_file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let _ = progress_sender.send(ProgressUpdate {
+                    processed: file_index,
+                    total: total_files,
+                    current_file: format!("正在处理: {}", file_name),
+                    ..Default::default()
+                });
 
                 // 加载原始图片
                 let original_image = image::open(image_file)
@@ -497,12 +518,36 @@ impl ImageConverterApp {
                 let file_name = image_file.file_name().unwrap_or_default();
                 let output_file = output_path.join(file_name);
 
-                // 直接保存，不进行任何压缩
-                processed_image.save(&output_file)
+                // 🔧 智能保存：检测文件格式并处理RGBA兼容性
+                let file_extension = output_file.extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+
+                let final_image = if file_extension == "jpg" || file_extension == "jpeg" {
+                    // JPEG不支持透明度，转换为RGB
+                    match processed_image {
+                        DynamicImage::ImageRgba8(_) => DynamicImage::ImageRgb8(processed_image.to_rgb8()),
+                        _ => processed_image,
+                    }
+                } else {
+                    processed_image // PNG等其他格式支持RGBA
+                };
+
+                final_image.save(&output_file)
                     .map_err(|e| anyhow::anyhow!("保存图片失败 '{}': {}", output_file.display(), e))?;
 
                 processed_count += 1;
                 println!("✨ 已保存水印图片: {}", output_file.display());
+
+                // 发送文件完成进度更新
+                let output_file_name = output_file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let _ = progress_sender.send(ProgressUpdate {
+                    processed: file_index + 1,
+                    total: total_files,
+                    current_file: format!("已完成: {} ({}/{})", output_file_name, file_index + 1, total_files),
+                    ..Default::default()
+                });
             }
 
             println!("🎉 纯水印处理完成! 共处理 {} 张图片", processed_count);
@@ -672,6 +717,9 @@ impl ImageConverterApp {
                         ui.add_space(10.0);
                         ui.label("透明度:");
                         ui.add(egui::Slider::new(&mut self.config.watermark_settings.text_opacity, 0.1..=1.0).text(""));
+                        ui.add_space(10.0);
+                        ui.label("字符间距:");
+                        ui.add(egui::DragValue::new(&mut self.config.watermark_settings.text_letter_spacing).speed(0.2).clamp_range(0..=20));
                     });
                     ui.horizontal(|ui| {
                         components::format_selector(ui, "文字位置", &mut self.config.watermark_settings.text_position, &WatermarkPosition::all_positions());
@@ -698,7 +746,7 @@ impl ImageConverterApp {
                     });
                     ui.horizontal(|ui| {
                         ui.label("缩放:");
-                        ui.add(egui::Slider::new(&mut self.config.watermark_settings.image_scale, 0.1..=2.0).text(""));
+                        ui.add(egui::Slider::new(&mut self.config.watermark_settings.image_scale, 0.01..=2.0).text(""));
                         ui.add_space(10.0);
                         ui.label("透明度:");
                         ui.add(egui::Slider::new(&mut self.config.watermark_settings.image_opacity, 0.1..=1.0).text(""));
@@ -752,6 +800,9 @@ impl ImageConverterApp {
                         ui.add_space(10.0);
                         ui.label("透明度:");
                         ui.add(egui::Slider::new(&mut self.config.watermark_settings.text_opacity, 0.1..=1.0).text(""));
+                        ui.add_space(10.0);
+                        ui.label("字符间距:");
+                        ui.add(egui::DragValue::new(&mut self.config.watermark_settings.text_letter_spacing).speed(0.2).clamp_range(0..=20));
                     });
                     ui.horizontal(|ui| {
                         components::format_selector(ui, "文字位置", &mut self.config.watermark_settings.text_position, &WatermarkPosition::all_positions());
@@ -778,7 +829,7 @@ impl ImageConverterApp {
                     });
                     ui.horizontal(|ui| {
                         ui.label("缩放:");
-                        ui.add(egui::Slider::new(&mut self.config.watermark_settings.image_scale, 0.1..=2.0).text(""));
+                        ui.add(egui::Slider::new(&mut self.config.watermark_settings.image_scale, 0.01..=2.0).text(""));
                         ui.add_space(10.0);
                         ui.label("透明度:");
                         ui.add(egui::Slider::new(&mut self.config.watermark_settings.image_opacity, 0.1..=1.0).text(""));

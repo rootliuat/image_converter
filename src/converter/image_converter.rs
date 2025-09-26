@@ -100,6 +100,18 @@ pub fn compress_and_save_with_watermark(
         processed_image = processor.add_image_watermark(processed_image, image_config)?;
     }
 
+    // 🔧 关键修复：对于JPEG格式，确保转换为RGB（不支持透明度）
+    let final_image = match output_format {
+        OutputFormat::Jpeg => {
+            // JPEG不支持透明度，强制转换为RGB
+            match processed_image {
+                DynamicImage::ImageRgba8(_) => DynamicImage::ImageRgb8(processed_image.to_rgb8()),
+                _ => processed_image,
+            }
+        },
+        _ => processed_image, // PNG和WebP格式支持RGBA，保持原样
+    };
+
     // 使用原有的压缩保存逻辑
-    compress_and_save(&processed_image, output_path, target_kb, output_format)
+    compress_and_save(&final_image, output_path, target_kb, output_format)
 }
